@@ -1,0 +1,42 @@
+name: Build Shadowrocket rules
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"   # каждые 6 часов, как и источник
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Convert
+        run: |
+          BASE="https://raw.githubusercontent.com/${{ github.repository }}/rules"
+          python3 geodat2shadowrocket.py -o out --base-url "$BASE" \
+            --policy ads=REJECT --final DIRECT \
+            "ads=geosite:category-ads-all" \
+            "telegram=geosite:telegram+geoip:telegram" \
+            "youtube=geosite:youtube" \
+            "ru-blocked=geosite:ru-blocked" \
+            "ru-blocked-ip=geoip:ru-blocked"
+
+      - name: Publish to 'rules' branch
+        run: |
+          cd out
+          git init -q -b rules
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "rules $(date -u +%Y-%m-%dT%H:%MZ)"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" rules
