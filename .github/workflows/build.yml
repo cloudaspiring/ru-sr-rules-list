@@ -12,24 +12,32 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
+      - uses: actions/checkout@v5
 
       - name: Convert
         run: |
-          BASE="https://raw.githubusercontent.com/${{ github.repository }}/rules"
-          python3 geodat2shadowrocket.py -o out --base-url "$BASE" \
-            --policy ads=REJECT --final DIRECT \
-            "ads=geosite:category-ads-all" \
-            "telegram=geosite:telegram+geoip:telegram" \
-            "youtube=geosite:youtube" \
-            "ru-blocked=geosite:ru-blocked" \
+          # Категории — по одной в строке, в кавычках. Порядок = порядок правил (REJECT первым).
+          SPECS=(
+            "my-direct=file:direct.txt"
+            "my-proxy=file:proxy.txt"
+            "ads=geosite:category-ads-all"
+            "telegram=geosite:telegram+geoip:telegram"
+            "youtube=geosite:youtube"
+            "ru-blocked=geosite:ru-blocked"
             "ru-blocked-ip=geoip:ru-blocked"
+          )
+
+          SCRIPT=$(find . -name 'geodat2shadowrocket*.py' -not -path './.git/*' | head -1)
+          if [ -z "$SCRIPT" ]; then
+            echo "::error::geodat2shadowrocket.py не найден в репозитории"; ls -laR; exit 1
+          fi
+          echo "Скрипт: $SCRIPT"
+
+          BASE="https://raw.githubusercontent.com/${{ github.repository }}/rules"
+          python3 "$SCRIPT" -o out --base-url "$BASE" --policy ads=REJECT --policy my-direct=DIRECT --final DIRECT "${SPECS[@]}"
+          ls -la out
 
       - name: Publish to 'rules' branch
         run: |
