@@ -185,6 +185,43 @@ class Bucket:
             {T_FULL: self.full, T_DOMAIN: self.suffix,
              T_PLAIN: self.keyword, T_REGEX: self.regex}.get(dtype, self.keyword).add(value)
 
+    def add_file(self, path):
+        """Свой список. Строки: 'example.com' (суффикс), 'full:a.b.com', 'keyword:x',
+        '1.2.3.0/24', либо в формате Shadowrocket: 'DOMAIN-SUFFIX,example.com' и т.п.
+        Комментарии: # или //"""
+        with open(path, encoding="utf-8-sig") as f:
+            for n, raw in enumerate(f, 1):
+                line = raw.split("#", 1)[0].split("//", 1)[0].strip()
+                if not line:
+                    continue
+                if "," in line:
+                    typ, val = (s.strip() for s in line.split(",")[:2])
+                    typ = typ.upper()
+                elif ":" in line and line.split(":", 1)[0].lower() in ("full", "domain", "keyword", "regexp"):
+                    typ, val = line.split(":", 1)
+                    typ = {"full": "DOMAIN", "domain": "DOMAIN-SUFFIX",
+                           "keyword": "DOMAIN-KEYWORD", "regexp": "REGEX"}[typ.lower()]
+                else:
+                    typ, val = "", line
+                    try:
+                        ipaddress.ip_network(val, strict=False)
+                        typ = "IP-CIDR"
+                    except ValueError:
+                        typ = "DOMAIN-SUFFIX"
+                val = val.strip().lower().rstrip(".").lstrip(".")
+                if typ == "DOMAIN":
+                    self.full.add(val)
+                elif typ == "DOMAIN-SUFFIX":
+                    self.suffix.add(val.lstrip("*."))
+                elif typ == "DOMAIN-KEYWORD":
+                    self.keyword.add(val)
+                elif typ in ("IP-CIDR", "IP-CIDR6"):
+                    self.nets.append(ipaddress.ip_network(val, strict=False))
+                elif typ == "REGEX":
+                    self.regex.add(val)
+                else:
+                    print(f"! {path}:{n}: тип '{typ}' не поддерживается — пропущено", file=sys.stderr)
+
     def optimize(self):
         """Убирает домены, уже покрытые более общим DOMAIN-SUFFIX / KEYWORD."""
         def covered(d, include_self):
@@ -218,6 +255,8 @@ def parse_ref(ref):
         raise SystemExit(f"ожидается geosite:<имя> или geoip:<имя>, получено '{ref}'")
     kind, rest = ref.split(":", 1)
     kind = kind.strip().lower()
+    if kind == "file":
+        return kind, rest.strip(), []
     if kind not in ("geosite", "geoip"):
         raise SystemExit(f"неизвестный тип '{kind}' в '{ref}'")
     name, *attrs = rest.split("@")
@@ -233,6 +272,8 @@ def parse_spec(spec):
     refs = [parse_ref(r) for r in refs.split("+") if r.strip()]
     if out is None:
         k, n, f = refs[0]
+        if k == "file":
+            n = os.path.splitext(os.path.basename(n))[0]
         out = f"{k}-{n}" + "".join(("-no-" if neg else "-") + a for a, neg in f)
     return out.strip(), refs
 
@@ -348,6 +389,13 @@ def main():
         out, refs = parse_spec(spec)
         b = Bucket()
         for kind, name, flt in refs:
+            if kind == "file":
+                try:
+                    b.add_file(name)
+                except OSError as e:
+                    print(f"✗ file:{name}: {e}", file=sys.stderr)
+                    errors += 1
+                continue
             dat = gs if kind == "geosite" else gi
             span = dat.idx.get(name)
             if span is None:
